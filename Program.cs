@@ -1,5 +1,4 @@
-﻿using System.Text.Json;
-using Spectre.Console;
+﻿using Spectre.Console;
 
 namespace HexapawnAI;
 
@@ -8,7 +7,7 @@ public class Program
     private static void Main()
     {
         var states = new List<Game.State>();
-        while (true)
+        for (var i = 0; i < 1000; i++)
         {
             states = new Game().Simulate(states).ToList();
         }
@@ -18,12 +17,13 @@ public class Program
 public class Game
 {
     private const int Size = 3;
-    private const double Reward = 0.1;
+    private const double MaximumReward = 0.3;
+    private const double MinimumReward = 0.1;
     private const double InitialWeight = 1;
     private const double LowerBound = 0.1;
     private List<State> states;
-    private State CurrentState => states.ElementAt(currentState);
-    private int currentState;
+    private State CurrentState => states.ElementAt(currentStateIndex);
+    private int currentStateIndex;
     private Player currentPlayer;
     private Player OtherPlayer => currentPlayer == Player.White ? Player.Black : Player.White;
     private static int currentGame;
@@ -36,7 +36,7 @@ public class Game
 
     public Game()
     {
-        currentState = 0;
+        currentStateIndex = 0;
         currentPlayer = Player.White;
         states = new() { InitialState };
     }
@@ -54,19 +54,21 @@ public class Game
         {
             Console.Clear();
             AnsiConsole.MarkupLine($"[bold white]Current player: {currentPlayer}[/]");
-            AnsiConsole.MarkupLine($"[bold green1]Current state (state {currentState + 1}):[/]");
+            AnsiConsole.MarkupLine($"[bold green1]Current state (state {currentStateIndex + 1}):[/]");
             AnsiConsole.MarkupLine(CurrentState.Display(1));
             var (winner, nextStates, winReason) = Step();
             if (winner != null)
             {
                 AnsiConsole.MarkupLine($"[bold dodgerblue1]Player {winner} wins! [[{winReason}]][/]");
-                foreach (var state in states.Where(state => state.Game == currentGame))
+                IEnumerable<State> statesThisGame = states.Where(state => state.Game == currentGame);
+                foreach (var (state, index) in statesThisGame.Select((state, index) => (state, index)))
                 {
+                    var reward = MaximumReward - (MaximumReward - MinimumReward) * index / (statesThisGame.Count() - 1);
                     if (winner == state.CurrentPlayer)
-                        state.Weight += Reward;
+                        state.Weight += reward;
                     else
                     {
-                        state.Weight -= Reward;
+                        state.Weight -= reward;
                         if (state.Weight < LowerBound)
                             state.Weight = LowerBound;
                     }
@@ -75,7 +77,7 @@ public class Game
             }
             foreach (var (state, index, chance) in nextStates.Select((pair, index) => (pair.Key, index, pair.Value)))
             {
-                AnsiConsole.MarkupLine($"    [bold orange3]Next state {index + 1} (chance {chance:P2}):[/]");
+                AnsiConsole.MarkupLine($"    [bold orange3]Next state {index + 1} (chance {chance:P2}, weight {state.Weight:f2}):[/]");
                 AnsiConsole.MarkupLine(state.Display(2));
             }
         }
@@ -92,9 +94,12 @@ public class Game
             State? state = states.Find(state => state.Equals(nextState));
             nextState.Weight = state?.Weight ?? InitialWeight;
             if (state != null)
+            {
                 state.Game = currentGame;
                 nextState.Game = currentGame;
+            }
         }
+
         var chances = State.GetStateChances(nextStates);
         var dictionary = Enumerable
                 .Zip(nextStates, chances)
@@ -106,9 +111,14 @@ public class Game
 
         var chosenState = State.ChooseState(nextStates);
 
-        if (!states.Contains(chosenState))
-            states.Insert(currentState + 1, chosenState);
-        currentState++;
+        var existingStateIndex = states.IndexOf(chosenState);
+        if (existingStateIndex == -1)
+        {
+            states.Insert(currentStateIndex + 1, chosenState);
+            currentStateIndex++;
+        }
+        else
+            currentStateIndex = existingStateIndex;
         CurrentState.PlayerToMove = currentPlayer = OtherPlayer;
         return (null, dictionary, null);
     }
